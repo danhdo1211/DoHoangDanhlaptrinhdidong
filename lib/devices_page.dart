@@ -10,9 +10,8 @@ class DevicesPage extends StatefulWidget {
 }
 
 class _DevicesPageState extends State<DevicesPage> {
-  List devices = [];
+  List devices = [], children = [];
   bool loading = true;
-  final search = TextEditingController();
 
   @override
   void initState() {
@@ -28,7 +27,13 @@ class _DevicesPageState extends State<DevicesPage> {
     try {
       final path = (q == null || q.isEmpty) ? 'Devices' : 'Devices/search?name=$q';
       final r = await Api.get(path);
-      if (r.statusCode == 200) devices = jsonDecode(r.body);
+      if (r.statusCode == 200) {
+        devices = jsonDecode(r.body);
+      } else {
+        msg('Lỗi ${r.statusCode}: ${r.body}');
+      }
+      final c = await Api.get('Auth/my-children');
+      if (c.statusCode == 200) children = jsonDecode(c.body);
     } catch (e) {
       msg('Lỗi kết nối: $e');
     }
@@ -36,42 +41,52 @@ class _DevicesPageState extends State<DevicesPage> {
   }
 
   Future<void> form([Map? d]) async {
+    if (children.isEmpty) {
+      msg('Hãy tạo tài khoản cho bé trước');
+      return;
+    }
     final name = TextEditingController(text: d?['name'] ?? '');
     final model = TextEditingController(text: d?['model'] ?? '');
-    final child = TextEditingController(text: '${d?['childId'] ?? ''}');
+    int childId = d?['childId'] ?? children.first['id'];
+    if (!children.any((c) => c['id'] == childId)) childId = children.first['id'];
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(d == null ? 'Thêm thiết bị' : 'Sửa thiết bị'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên thiết bị')),
-          TextField(controller: model, decoration: const InputDecoration(labelText: 'Model')),
-          TextField(controller: child, keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'ID tài khoản con')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Hủy')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Lưu')),
-        ],
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          title: Text(d == null ? 'Thêm thiết bị' : 'Sửa thiết bị'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên thiết bị')),
+            TextField(controller: model, decoration: const InputDecoration(labelText: 'Model')),
+            DropdownButtonFormField<int>(
+              value: childId,
+              decoration: const InputDecoration(labelText: 'Của bé'),
+              items: [
+                for (final c in children)
+                  DropdownMenuItem<int>(
+                      value: c['id'], child: Text(c['fullName'] ?? c['email'])),
+              ],
+              onChanged: (v) => setS(() => childId = v!),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Lưu')),
+          ],
+        ),
       ),
     );
     if (ok != true) return;
-    final body = {
-      'id': d?['id'] ?? 0,
-      'name': name.text,
-      'model': model.text,
-      'childId': int.tryParse(child.text) ?? 0,
-    };
+    final body = {'id': d?['id'] ?? 0, 'name': name.text, 'model': model.text, 'childId': childId};
     final r = d == null
         ? await Api.post('Devices', body)
         : await Api.put('Devices/${d['id']}', body);
-    if (r.statusCode >= 400) msg('Lỗi: ${r.body}');
+    if (r.statusCode >= 400) msg('Lỗi ${r.statusCode}: ${r.body}');
     load();
   }
 
   Future<void> remove(int id) async {
     final r = await Api.delete('Devices/$id');
-    if (r.statusCode >= 400) msg('Lỗi xóa');
+    if (r.statusCode >= 400) msg('Lỗi xóa ${r.statusCode}');
     load();
   }
 
@@ -79,13 +94,12 @@ class _DevicesPageState extends State<DevicesPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Thiết bị của bé')),
-      floatingActionButton: FloatingActionButton(
-          onPressed: () => form(), child: const Icon(Icons.add)),
+      floatingActionButton:
+      FloatingActionButton(onPressed: () => form(), child: const Icon(Icons.add)),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.all(12),
           child: TextField(
-            controller: search,
             decoration: InputDecoration(
               hintText: 'Tìm theo tên...',
               prefixIcon: const Icon(Icons.search),
@@ -109,11 +123,15 @@ class _DevicesPageState extends State<DevicesPage> {
                   leading: const CircleAvatar(child: Icon(Icons.phone_android)),
                   title: Text(d['name'] ?? ''),
                   subtitle: Text('${d['model'] ?? ''} • Bé ID ${d['childId']}'),
-                  onTap: () => Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => RulesPage(deviceId: d['id'], deviceName: d['name'] ?? ''))),
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => RulesPage(
+                              deviceId: d['id'], deviceName: d['name'] ?? ''))),
                   trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                     IconButton(icon: const Icon(Icons.edit), onPressed: () => form(d)),
-                    IconButton(icon: const Icon(Icons.delete, color: Colors.red),
+                    IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
                         onPressed: () => remove(d['id'])),
                   ]),
                 ),
